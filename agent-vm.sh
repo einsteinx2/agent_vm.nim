@@ -63,7 +63,7 @@ _agent_vm_ensure_running() {
   local vm_name="$1"
   local host_dir="$2"
   shift 2
-  local disk="" memory="" cpus="" reset="" offline="" rdonly=""
+  local disk="" memory="" cpus="" reset="" offline="" rdonly="" git_ro=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     disk="$2"; shift 2 ;;
@@ -72,6 +72,7 @@ _agent_vm_ensure_running() {
       --reset)    reset=1; shift ;;
       --offline)  offline=1; shift ;;
       --readonly) rdonly=1; shift ;;
+      --git-read-only|--git-ro) git_ro=1; shift ;;
       *)          shift ;;
     esac
   done
@@ -183,6 +184,12 @@ _agent_vm_ensure_running() {
     echo "Mounting project directory as read-only..."
     limactl shell "$vm_name" sudo mount -o remount,ro "$host_dir"
   fi
+
+  if [[ -n "$git_ro" ]] && [[ -d "$host_dir/.git" ]]; then
+    echo "Mounting .git directory as read-only..."
+    limactl shell "$vm_name" sudo mount --bind "$host_dir/.git" "$host_dir/.git"
+    limactl shell "$vm_name" sudo mount -o remount,ro,bind "$host_dir/.git"
+  fi
 }
 
 agent-vm() {
@@ -208,6 +215,8 @@ agent-vm() {
         vm_opts+=(--offline); shift ;;
       --readonly)
         vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro)
+        vm_opts+=(--git-read-only); shift ;;
       --rm)
         vm_opts+=(--rm); shift ;;
       *)
@@ -288,6 +297,7 @@ VM options (for claude, opencode, codex, shell, run):
   --reset            Destroy and re-clone the VM from the base template
   --offline          Block outbound internet (keeps host/VM communication)
   --readonly         Mount the project directory as read-only
+  --git-read-only    Mount .git directory as read-only (allows git diff/log but not commit/stash)
   --rm               Automatically destroy the VM after the command exits
 
 Examples:
@@ -300,6 +310,7 @@ Examples:
   agent-vm --rm claude                       # Destroy VM after Claude exits
   agent-vm --offline claude                  # No internet access
   agent-vm --readonly shell                  # Read-only project mount
+  agent-vm --git-ro claude                   # Protect .git from writes
   agent-vm shell                             # Shell into the VM
   agent-vm run npm install                   # Run a command in the VM
   agent-vm claude -p "fix lint errors"       # Pass args to claude
@@ -359,7 +370,7 @@ _agent_vm_setup() {
         cpus="${1#*=}"
         shift
         ;;
-      --reset|--offline|--readonly)
+      --reset|--offline|--readonly|--git-read-only|--git-ro)
         shift ;;
       *)
         echo "Unknown option: $1" >&2
@@ -431,6 +442,7 @@ _agent_vm_claude() {
       --reset)    vm_opts+=(--reset); shift ;;
       --offline)  vm_opts+=(--offline); shift ;;
       --readonly) vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
@@ -462,6 +474,7 @@ _agent_vm_opencode() {
       --reset)    vm_opts+=(--reset); shift ;;
       --offline)  vm_opts+=(--offline); shift ;;
       --readonly) vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
@@ -495,6 +508,7 @@ _agent_vm_codex() {
       --reset)    vm_opts+=(--reset); shift ;;
       --offline)  vm_opts+=(--offline); shift ;;
       --readonly) vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
@@ -525,6 +539,7 @@ _agent_vm_shell() {
       --reset)    vm_opts+=(--reset); shift ;;
       --offline)  vm_opts+=(--offline); shift ;;
       --readonly) vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
       *)          shift ;;
     esac
@@ -562,6 +577,7 @@ _agent_vm_run() {
       --reset)    vm_opts+=(--reset); shift ;;
       --offline)  vm_opts+=(--offline); shift ;;
       --readonly) vm_opts+=(--readonly); shift ;;
+      --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
