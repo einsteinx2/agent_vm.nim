@@ -19,7 +19,7 @@
 #   agent-vm help     - Show help
 #
 
-AGENT_VM_TEMPLATE="agent-vm-base"
+AGENT_VM_TEMPLATE="avm-base"
 AGENT_VM_STATE_DIR="${HOME}/.agent-vm"
 AGENT_VM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
@@ -27,10 +27,45 @@ AGENT_VM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _agent_vm_name() {
   local dir="${1:-$(pwd)}"
   local hash
-  hash=$(echo -n "$dir" | shasum -a 256 | cut -c1-8)
+  hash=$(echo -n "$dir" | shasum -a 256 | cut -c1-16)
   local base
   base=$(basename "$dir" | tr -cs 'a-zA-Z0-9' '-' | sed 's/^-//;s/-$//')
-  echo "agent-vm-${base}-${hash}"
+  echo "avm-${base}-${hash}"
+}
+
+# Resolve VM name + mount root for cwd, honoring --no-inherit.
+# Walks up from cwd looking for an existing VM; falls back to cwd if none found
+# or if no_inherit is set. Sets globals directly (avoids command substitution
+# so stray output from the user's shell config cannot corrupt the values).
+# Sets globals: _agent_vm_resolved_name, _agent_vm_resolved_host_dir
+_agent_vm_resolve() {
+  local cwd="$1"
+  local no_inherit="$2"
+  _agent_vm_resolved_name=""
+  _agent_vm_resolved_host_dir=""
+
+  if [[ -z "$no_inherit" ]]; then
+    local dir="$cwd"
+    while :; do
+      local candidate
+      candidate="$(_agent_vm_name "$dir")"
+      if _agent_vm_exists "$candidate"; then
+        _agent_vm_resolved_name="$candidate"
+        _agent_vm_resolved_host_dir="$dir"
+        if [[ "$dir" != "$cwd" ]]; then
+          echo "Reusing VM '$_agent_vm_resolved_name' mounted at $_agent_vm_resolved_host_dir" >&2
+        fi
+        return 0
+      fi
+      local parent
+      parent="$(dirname "$dir")"
+      [[ "$parent" == "$dir" ]] && break
+      dir="$parent"
+    done
+  fi
+
+  _agent_vm_resolved_host_dir="$cwd"
+  _agent_vm_resolved_name="$(_agent_vm_name "$cwd")"
 }
 
 # Check if a VM exists (any state)
@@ -219,6 +254,8 @@ agent-vm() {
         vm_opts+=(--git-read-only); shift ;;
       --rm)
         vm_opts+=(--rm); shift ;;
+      --no-inherit)
+        vm_opts+=(--no-inherit); shift ;;
       *)
         break ;;
     esac
@@ -299,6 +336,7 @@ VM options (for claude, opencode, codex, shell, run):
   --readonly         Mount the project directory as read-only
   --git-read-only    Mount .git directory as read-only (allows git diff/log but not commit/stash)
   --rm               Automatically destroy the VM after the command exits
+  --no-inherit       Create a new VM for cwd instead of reusing an ancestor's VM
 
 Examples:
   agent-vm setup                             # Create base VM
@@ -316,7 +354,9 @@ Examples:
   agent-vm claude -p "fix lint errors"       # Pass args to claude
 
 VMs are persistent and unique per directory. Running "agent-vm shell" or
-"agent-vm claude" in the same directory will reuse the same VM.
+"agent-vm claude" in the same directory will reuse the same VM. Running
+from a subdirectory reuses the nearest ancestor's VM (use --no-inherit to
+force a new VM scoped to cwd).
 
 Customization:
   ~/.agent-vm/setup.sh              Per-user setup (runs during "agent-vm setup")
@@ -370,7 +410,7 @@ _agent_vm_setup() {
         cpus="${1#*=}"
         shift
         ;;
-      --reset|--offline|--readonly|--git-read-only|--git-ro)
+      --reset|--offline|--readonly|--git-read-only|--git-ro|--no-inherit|--rm)
         shift ;;
       *)
         echo "Unknown option: $1" >&2
@@ -434,6 +474,7 @@ _agent_vm_claude() {
   local vm_opts=()
   local args=()
   local rm=""
+  local no_inherit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     vm_opts+=(--disk "$2"); shift 2 ;;
@@ -444,19 +485,27 @@ _agent_vm_claude() {
       --readonly) vm_opts+=(--readonly); shift ;;
       --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
+      --no-inherit) no_inherit=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
   done
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
+
+  if [[ -n "$rm" && "$host_dir" != "$cwd" ]]; then
+    echo "Error: --rm would destroy VM '$vm_name' mounted at $host_dir, which is shared with parent directories." >&2
+    echo "Run --rm from $host_dir, or use --no-inherit to create a fresh VM for $cwd." >&2
+    return 1
+  fi
 
   _agent_vm_ensure_running "$vm_name" "$host_dir" "${vm_opts[@]}" || return 1
   _agent_vm_print_resources "$vm_name"
 
   local exit_code=0
-  limactl shell --workdir "$host_dir" "$vm_name" claude --dangerously-skip-permissions "${args[@]}"
+  limactl shell --workdir "$cwd" "$vm_name" claude --dangerously-skip-permissions "${args[@]}"
   exit_code=$?
   [[ -n "$rm" ]] && { echo "Removing VM..."; _agent_vm_destroy; }
   return $exit_code
@@ -466,6 +515,7 @@ _agent_vm_opencode() {
   local vm_opts=()
   local args=()
   local rm=""
+  local no_inherit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     vm_opts+=(--disk "$2"); shift 2 ;;
@@ -476,13 +526,21 @@ _agent_vm_opencode() {
       --readonly) vm_opts+=(--readonly); shift ;;
       --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
+      --no-inherit) no_inherit=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
   done
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
+
+  if [[ -n "$rm" && "$host_dir" != "$cwd" ]]; then
+    echo "Error: --rm would destroy VM '$vm_name' mounted at $host_dir, which is shared with parent directories." >&2
+    echo "Run --rm from $host_dir, or use --no-inherit to create a fresh VM for $cwd." >&2
+    return 1
+  fi
 
   _agent_vm_ensure_running "$vm_name" "$host_dir" "${vm_opts[@]}" || return 1
   _agent_vm_print_resources "$vm_name"
@@ -490,7 +548,7 @@ _agent_vm_opencode() {
   # TODO: add --dangerously-skip-permissions once released
   # (waiting on https://github.com/anomalyco/opencode/pull/11833)
   local exit_code=0
-  limactl shell --tty --workdir "$host_dir" "$vm_name" opencode "${args[@]}"
+  limactl shell --tty --workdir "$cwd" "$vm_name" opencode "${args[@]}"
   exit_code=$?
   [[ -n "$rm" ]] && { echo "Removing VM..."; _agent_vm_destroy; }
   return $exit_code
@@ -500,6 +558,7 @@ _agent_vm_codex() {
   local vm_opts=()
   local args=()
   local rm=""
+  local no_inherit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     vm_opts+=(--disk "$2"); shift 2 ;;
@@ -510,19 +569,27 @@ _agent_vm_codex() {
       --readonly) vm_opts+=(--readonly); shift ;;
       --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
+      --no-inherit) no_inherit=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
   done
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
+
+  if [[ -n "$rm" && "$host_dir" != "$cwd" ]]; then
+    echo "Error: --rm would destroy VM '$vm_name' mounted at $host_dir, which is shared with parent directories." >&2
+    echo "Run --rm from $host_dir, or use --no-inherit to create a fresh VM for $cwd." >&2
+    return 1
+  fi
 
   _agent_vm_ensure_running "$vm_name" "$host_dir" "${vm_opts[@]}" || return 1
   _agent_vm_print_resources "$vm_name"
 
   local exit_code=0
-  limactl shell --workdir "$host_dir" "$vm_name" codex --full-auto "${args[@]}"
+  limactl shell --workdir "$cwd" "$vm_name" codex --full-auto "${args[@]}"
   exit_code=$?
   [[ -n "$rm" ]] && { echo "Removing VM..."; _agent_vm_destroy; }
   return $exit_code
@@ -531,6 +598,7 @@ _agent_vm_codex() {
 _agent_vm_shell() {
   local vm_opts=()
   local rm=""
+  local no_inherit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     vm_opts+=(--disk "$2"); shift 2 ;;
@@ -541,25 +609,33 @@ _agent_vm_shell() {
       --readonly) vm_opts+=(--readonly); shift ;;
       --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
+      --no-inherit) no_inherit=1; shift ;;
       *)          shift ;;
     esac
   done
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
+
+  if [[ -n "$rm" && "$host_dir" != "$cwd" ]]; then
+    echo "Error: --rm would destroy VM '$vm_name' mounted at $host_dir, which is shared with parent directories." >&2
+    echo "Run --rm from $host_dir, or use --no-inherit to create a fresh VM for $cwd." >&2
+    return 1
+  fi
 
   _agent_vm_ensure_running "$vm_name" "$host_dir" "${vm_opts[@]}" || return 1
   _agent_vm_print_resources "$vm_name"
 
-  echo "VM: $vm_name | Dir: $host_dir"
+  echo "VM: $vm_name | Mount: $host_dir | Workdir: $cwd"
   if [[ -n "$rm" ]]; then
     echo "Type 'exit' to leave. VM will be destroyed after exit."
   else
     echo "Type 'exit' to leave (VM keeps running). Use 'agent-vm stop' to stop it."
   fi
   local exit_code=0
-  limactl shell --workdir "$host_dir" "$vm_name" zsh -l
+  limactl shell --workdir "$cwd" "$vm_name" zsh -l
   exit_code=$?
   [[ -n "$rm" ]] && { echo "Removing VM..."; _agent_vm_destroy; }
   return $exit_code
@@ -569,6 +645,7 @@ _agent_vm_run() {
   local vm_opts=()
   local args=()
   local rm=""
+  local no_inherit=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --disk)     vm_opts+=(--disk "$2"); shift 2 ;;
@@ -579,6 +656,7 @@ _agent_vm_run() {
       --readonly) vm_opts+=(--readonly); shift ;;
       --git-read-only|--git-ro) vm_opts+=(--git-read-only); shift ;;
       --rm)       rm=1; shift ;;
+      --no-inherit) no_inherit=1; shift ;;
       *)          args+=("$1"); shift ;;
     esac
   done
@@ -586,49 +664,85 @@ _agent_vm_run() {
     echo "Usage: agent-vm run <command> [args]" >&2
     return 1
   fi
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
+
+  if [[ -n "$rm" && "$host_dir" != "$cwd" ]]; then
+    echo "Error: --rm would destroy VM '$vm_name' mounted at $host_dir, which is shared with parent directories." >&2
+    echo "Run --rm from $host_dir, or use --no-inherit to create a fresh VM for $cwd." >&2
+    return 1
+  fi
 
   _agent_vm_ensure_running "$vm_name" "$host_dir" "${vm_opts[@]}" || return 1
   _agent_vm_print_resources "$vm_name"
 
   local exit_code=0
-  limactl shell --workdir "$host_dir" "$vm_name" "${args[@]}"
+  limactl shell --workdir "$cwd" "$vm_name" "${args[@]}"
   exit_code=$?
   [[ -n "$rm" ]] && { echo "Removing VM..."; _agent_vm_destroy; }
   return $exit_code
 }
 
 _agent_vm_stop() {
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local no_inherit=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-inherit) no_inherit=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
 
   if ! _agent_vm_exists "$vm_name"; then
     echo "No VM found for this directory." >&2
     return 1
   fi
 
-  echo "Stopping VM '$vm_name'..."
+  echo "Stopping VM '$vm_name' (mounted at $host_dir)..."
   limactl stop "$vm_name" &>/dev/null
   echo "VM stopped."
 }
 
 _agent_vm_destroy() {
-  local host_dir
-  host_dir="$(pwd)"
-  local vm_name
-  vm_name="$(_agent_vm_name "$host_dir")"
+  local no_inherit=""
+  local force=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-inherit) no_inherit=1; shift ;;
+      -y|--yes) force=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  local cwd
+  cwd="$(pwd)"
+  _agent_vm_resolve "$cwd" "$no_inherit"
+  local vm_name="$_agent_vm_resolved_name"
+  local host_dir="$_agent_vm_resolved_host_dir"
 
   if ! _agent_vm_exists "$vm_name"; then
     echo "No VM found for this directory." >&2
     return 1
   fi
 
-  echo "Stopping and deleting VM '$vm_name'..."
+  if [[ "$host_dir" != "$cwd" && -z "$force" ]]; then
+    echo "VM '$vm_name' is mounted at $host_dir, which is shared with parent directories."
+    printf "Destroy it anyway? [y/N] "
+    local reply
+    read -r reply
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      return 1
+    fi
+  fi
+
+  echo "Stopping and deleting VM '$vm_name' (mounted at $host_dir)..."
   limactl stop "$vm_name" &>/dev/null
   limactl delete "$vm_name" --force &>/dev/null
   rm -f "$AGENT_VM_STATE_DIR/.agent-vm-version-${vm_name}"
@@ -637,7 +751,7 @@ _agent_vm_destroy() {
 
 _agent_vm_destroy_all() {
   local vms
-  vms=$(limactl list -q 2>/dev/null | grep "^agent-vm-" || true)
+  vms=$(limactl list -q 2>/dev/null | grep -E "^(avm-|agent-vm-)" || true)
   if [[ -z "$vms" ]]; then
     echo "No agent-vm VMs found."
     return 0
@@ -662,22 +776,31 @@ _agent_vm_destroy_all() {
 
 _agent_vm_list() {
   limactl list | head -1
-  limactl list | grep "^agent-vm-" || echo "(no VMs)"
+  limactl list | grep -E "^(avm-|agent-vm-)" || echo "(no VMs)"
 }
 
 _agent_vm_status() {
-  local host_dir
-  host_dir="$(pwd)"
-  local current_vm_name
-  current_vm_name="$(_agent_vm_name "$host_dir")"
+  local cwd
+  cwd="$(pwd)"
+  local current_vm_name="" current_host_dir=""
+  _agent_vm_resolve "$cwd" "" 2>/dev/null
+  # Only highlight a VM if it actually exists — _agent_vm_resolve falls back
+  # to a hypothetical name for cwd when nothing is found.
+  if _agent_vm_exists "$_agent_vm_resolved_name"; then
+    current_vm_name="$_agent_vm_resolved_name"
+    current_host_dir="$_agent_vm_resolved_host_dir"
+  fi
 
   local header
   header=$(limactl list | head -1)
 
-  echo "VMs (current directory: $host_dir):"
+  echo "VMs (current directory: $cwd):"
+  if [[ -n "$current_vm_name" && "$current_host_dir" != "$cwd" ]]; then
+    echo "Inherited VM '$current_vm_name' (mounted at $current_host_dir)"
+  fi
   echo ""
   echo "$header" | sed 's/^/  /'
-  limactl list | grep "^agent-vm-" | while read -r line; do
+  limactl list | grep -E "^(avm-|agent-vm-)" | while read -r line; do
     local vm_name
     vm_name=$(echo "$line" | awk '{print $1}')
     if [[ "$vm_name" == "$current_vm_name" ]]; then
