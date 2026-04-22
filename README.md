@@ -1,38 +1,36 @@
-# agent-vm
+# agent_vm
 
 Run AI coding agents inside sandboxed Linux VMs. The agent gets full autonomy while your host system stays safe.
 
 Uses [Lima](https://lima-vm.io/) to create lightweight Debian VMs on macOS and Linux. Ships with dev tools, Docker, and a headless Chrome browser with [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp) pre-configured.
 
-Supports [Claude Code](https://claude.ai/code), [OpenCode](https://github.com/anomalyco/opencode), and [Codex CLI](https://github.com/openai/codex) out of the box. Other agents can be run via `agent-vm shell`.
-
-Never install attack vectors such as npm, claude or even Docker on your host machine again!
-
-Feedback welcome!
+Supports [Claude Code](https://claude.ai/code), [OpenCode](https://github.com/anomalyco/opencode), and [Codex CLI](https://github.com/openai/codex) out of the box. Other agents can be run via `agent_vm shell`.
 
 ## Prerequisites
 
 - macOS or Linux
-- [Lima](https://lima-vm.io/docs/installation/) (installed automatically via Homebrew if available)
+- [Nim](https://nim-lang.org) ≥ 2.0 (e.g. `brew install nim`) — the script is a `nim r` shebang that compiles on first run and caches the binary
+- [Lima](https://lima-vm.io/docs/installation/) (installed automatically via Homebrew if available during `agent_vm setup`)
 - A subscription or API key for your agent of choice
 
 ## Install
 
 ```bash
-git clone https://github.com/sylvinus/agent-vm.git
-cd agent-vm
+git clone https://github.com/einsteinx2/agent_vm.nim.git
+cd agent_vm.nim
 
-# Add to your shell config
-echo "source $(pwd)/agent-vm.sh" >> ~/.zshrc   # zsh
-echo "source $(pwd)/agent-vm.sh" >> ~/.bashrc  # or bash
+# Symlink agent_vm onto your $PATH
+ln -s "$(pwd)/agent_vm.nim" ~/.local/bin/agent_vm
 ```
+
+First invocation compiles the script via `nim r`. Subsequent runs are cached and fast.
 
 ## Usage
 
 ### One-time setup
 
 ```bash
-agent-vm setup
+agent_vm setup
 ```
 
 Creates a base VM template with dev tools, Docker, Chromium, and AI coding agents pre-installed.
@@ -46,16 +44,16 @@ Options:
 | `--cpus N` | Number of CPUs | 1 |
 
 ```bash
-agent-vm setup --disk 50 --memory 16 --cpus 8   # Larger VM for heavy workloads
+agent_vm setup --disk 50 --memory 16 --cpus 8   # Larger VM for heavy workloads
 ```
 
 ### Run an agent in a VM
 
 ```bash
 cd your-project
-agent-vm claude                # Claude Code
-agent-vm opencode              # OpenCode
-agent-vm codex                 # Codex CLI
+agent_vm claude                # Claude Code
+agent_vm opencode              # OpenCode
+agent_vm codex                 # Codex CLI
 ```
 
 Creates a persistent VM for the current directory (or reuses it if one already exists), mounts your working directory, and runs the agent with full permissions. The VM persists after the agent exits so you can reconnect later. Ports opened inside the VM (e.g. by Docker containers or dev servers) are automatically forwarded to your host by Lima.
@@ -68,18 +66,18 @@ Each agent runs with its respective auto-approve flag:
 Any extra arguments are forwarded to the agent command:
 
 ```bash
-agent-vm claude -p "fix all lint errors"        # Run with a prompt
-agent-vm claude --resume                         # Resume previous session
-agent-vm opencode -p "refactor auth module"      # OpenCode with a prompt
-agent-vm codex -q "explain this codebase"        # Codex with a query
+agent_vm claude -p "fix all lint errors"        # Run with a prompt
+agent_vm claude --resume                         # Resume previous session
+agent_vm opencode -p "refactor auth module"      # OpenCode with a prompt
+agent_vm codex -q "explain this codebase"        # Codex with a query
 ```
 
 ### Shell access and running commands
 
 ```bash
-agent-vm shell                         # Open a zsh shell in the VM
-agent-vm run npm install               # Run a one-off command in the VM
-agent-vm run docker compose up -d      # Start services
+agent_vm shell                         # Open a zsh shell in the VM
+agent_vm run npm install               # Run a one-off command in the VM
+agent_vm run docker compose up -d      # Start services
 ```
 
 ### VM lifecycle
@@ -87,40 +85,40 @@ agent-vm run docker compose up -d      # Start services
 Each directory gets its own persistent VM. You can manage it with:
 
 ```bash
-agent-vm status      # Show status of all VMs (current dir marked with >)
-agent-vm stop        # Stop the VM (can be restarted later)
-agent-vm rm          # Stop and permanently delete the VM
-agent-vm destroy-all # Stop and delete all agent-vm VMs
+agent_vm status      # Show status of all VMs (current dir marked with >)
+agent_vm stop        # Stop the VM (can be restarted later)
+agent_vm rm          # Stop and permanently delete the VM
+agent_vm destroy-all # Stop and delete all agent_vm VMs
 ```
 
 To automatically destroy a VM after the agent exits (like `docker run --rm`):
 
 ```bash
-agent-vm --rm claude                   # Run Claude, then destroy the VM
-agent-vm --rm run npm test             # Run tests, then destroy the VM
+agent_vm --rm claude                   # Run Claude, then destroy the VM
+agent_vm --rm run npm test             # Run tests, then destroy the VM
 ```
 
 To resize an existing VM's disk or memory, just pass `--disk` or `--memory` again — the VM will be stopped, reconfigured, and restarted automatically:
 
 ```bash
-agent-vm --disk 50 claude              # Grow disk to 50GB, then run Claude
-agent-vm --memory 16 --cpus 8 shell    # Increase memory and CPUs, then open shell
+agent_vm --disk 50 claude              # Grow disk to 50GB, then run Claude
+agent_vm --memory 16 --cpus 8 shell    # Increase memory and CPUs, then open shell
 ```
 
 Note: disk can only be grown, not shrunk.
 
-Running `agent-vm setup` again updates the base template but does **not** update existing VMs. You'll see a warning when using a VM cloned from an older base. Use `--reset` to re-clone:
+Running `agent_vm setup` again updates the base template but does **not** update existing VMs. You'll see a warning when using a VM cloned from an older base. Use `--reset` to re-clone:
 
 ```bash
-agent-vm --reset claude                # Destroy and re-clone VM, then run Claude
+agent_vm --reset claude                # Destroy and re-clone VM, then run Claude
 ```
 
 ### Offline mode and read-only mounts
 
 ```bash
-agent-vm --offline claude              # Block outbound internet access
-agent-vm --readonly shell              # Mount project directory as read-only
-agent-vm --offline --readonly claude   # Both
+agent_vm --offline claude              # Block outbound internet access
+agent_vm --readonly shell              # Mount project directory as read-only
+agent_vm --offline --readonly claude   # Both
 ```
 
 `--offline` blocks outbound internet from the VM using iptables while preserving host/VM communication (mounts, port forwarding). Useful for ensuring agents don't phone home or download unexpected packages.
@@ -129,26 +127,26 @@ agent-vm --offline --readonly claude   # Both
 
 ## Customization
 
-### Per-user setup: `~/.agent-vm/setup.sh`
+### Per-user setup: `~/.agent_vm/setup.sh`
 
-Create this file to install extra tools into the base VM template. It runs once during `agent-vm setup`, as the default VM user (with sudo available):
+Create this file to install extra tools into the base VM template. It runs once during `agent_vm setup`, as the default VM user (with sudo available):
 
 ```bash
-# ~/.agent-vm/setup.sh
+# ~/.agent_vm/setup.sh
 sudo apt-get install -y postgresql-client
 pip install pandas numpy
 ```
 
-### Per-user runtime: `~/.agent-vm/runtime.sh`
+### Per-user runtime: `~/.agent_vm/runtime.sh`
 
-Create this file to run commands inside every VM on each start. It runs **before** the per-project `.agent-vm.runtime.sh` script.
+Create this file to run commands inside every VM on each start. It runs **before** the per-project `.agent_vm.runtime.sh` script.
 
 Use it for anything that should be available in all your VMs: SSH keys, git config, GitHub CLI auth, Claude Code skills, MCP servers, etc.
 
 **Getting started:**
 
 ```bash
-cp runtime.example.sh ~/.agent-vm/runtime.sh
+cp runtime.example.sh ~/.agent_vm/runtime.sh
 # Edit with your own values
 ```
 
@@ -172,23 +170,23 @@ Paste the output into your `runtime.sh` — the script decodes it at boot and se
 
 | File | Scope | Runs when |
 |------|-------|-----------|
-| `~/.agent-vm/runtime.sh` | All VMs | Every VM start, first |
-| `.agent-vm.runtime.sh` | Current project only | Every VM start, after global |
+| `~/.agent_vm/runtime.sh` | All VMs | Every VM start, first |
+| `.agent_vm.runtime.sh` | Current project only | Every VM start, after global |
 
-**Important:** Always launch `agent-vm` from a path without spaces. macOS iCloud paths contain spaces (`~/Library/Mobile Documents/...`), which can break mounts. Create a symlink instead:
+**Important:** Always launch `agent_vm` from a path without spaces. macOS iCloud paths contain spaces (`~/Library/Mobile Documents/...`), which can break mounts. Create a symlink instead:
 
 ```bash
 ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/Dev ~/Dev
 cd ~/Dev/your-project
-agent-vm claude
+agent_vm claude
 ```
 
-### Per-project: `.agent-vm.runtime.sh`
+### Per-project: `.agent_vm.runtime.sh`
 
 Create this file at the root of any project. It runs inside the VM each time a new VM is created for the project, just before you get access. Use it for project-specific setup like installing dependencies or starting services:
 
 ```bash
-# your-project/.agent-vm.runtime.sh
+# your-project/.agent_vm.runtime.sh
 npm install
 docker compose up -d
 ```
@@ -197,7 +195,7 @@ docker compose up -d
 
 The base VM comes with [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp) pre-configured for Claude, giving the agent headless browser access.
 
-To add more MCP servers, add them to `~/.claude.json` in your `~/.agent-vm/setup.sh`, or edit the file directly inside a VM via `agent-vm shell`. Add entries to the `mcpServers` object:
+To add more MCP servers, add them to `~/.claude.json` in your `~/.agent_vm/setup.sh`, or edit the file directly inside a VM via `agent_vm shell`. Add entries to the `mcpServers` object:
 
 ```json
 {
@@ -216,10 +214,10 @@ To add more MCP servers, add them to `~/.claude.json` in your `~/.agent-vm/setup
 
 ## How it works
 
-1. **`agent-vm setup`** creates a Debian 13 VM with Lima, runs `agent-vm.setup.sh` inside it to install dev tools + Chrome + agents, and stops it as a reusable base template
-2. **`agent-vm claude|opencode|codex [args]`** clones the base template into a persistent per-directory VM, mounts your working directory, runs optional runtime scripts (`~/.agent-vm/runtime.sh` then `.agent-vm.runtime.sh`), then launches the agent with full permissions
-3. The VM persists after exit. Running any agent command or `agent-vm shell` in the same directory reuses the same VM
-4. Use `agent-vm stop` to stop the VM or `agent-vm rm` to delete it. Use `--rm` to auto-delete after the command exits
+1. **`agent_vm setup`** creates a Debian 13 VM with Lima, runs `agent_vm.setup.sh` inside it to install dev tools + Chrome + agents, and stops it as a reusable base template
+2. **`agent_vm claude|opencode|codex [args]`** clones the base template into a persistent per-directory VM, mounts your working directory, runs optional runtime scripts (`~/.agent_vm/runtime.sh` then `.agent_vm.runtime.sh`), then launches the agent with full permissions
+3. The VM persists after exit. Running any agent command or `agent_vm shell` in the same directory reuses the same VM
+4. Use `agent_vm stop` to stop the VM or `agent_vm rm` to delete it. Use `--rm` to auto-delete after the command exits
 
 Each VM is fully isolated — agents must authenticate independently inside their VM (e.g. `claude login`). Credentials persist within the VM across restarts but are not shared between VMs or with the host.
 
@@ -227,8 +225,8 @@ Each VM is fully isolated — agents must authenticate independently inside thei
 
 | File | Description |
 |------|-------------|
-| `agent-vm.sh` | Main script — source this in your shell config |
-| `agent-vm.setup.sh` | Package installation script that runs inside the base VM during setup |
+| `agent_vm.nim` | Main script — a `nim r` shebang that compiles on first run and caches the binary |
+| `agent_vm.setup.sh` | Package installation script that runs inside the base VM during setup |
 
 ## What's in the VM by default
 
@@ -251,13 +249,13 @@ This is not a theoretical risk. The [Shai-Hulud](https://unit42.paloaltonetworks
 
 An AI agent running with `--dangerously-skip-permissions` on your host would give such an attack full access to everything: your SSH keys, your cloud credentials, your browser sessions, your entire filesystem.
 
-**agent-vm runs all code inside the VM.** The VM only has access to your project directory (read-write mount, or read-only with `--readonly`). It has **no access** to your SSH keys, npm tokens, cloud credentials, git config, browser sessions, or anything else on your host. If a supply chain attack executes inside the VM, it finds nothing to steal (except your source code) and nowhere to spread. Use `--offline` to block internet access entirely.
+**agent_vm runs all code inside the VM.** The VM only has access to your project directory (read-write mount, or read-only with `--readonly`). It has **no access** to your SSH keys, npm tokens, cloud credentials, git config, browser sessions, or anything else on your host. If a supply chain attack executes inside the VM, it finds nothing to steal (except your source code) and nowhere to spread. Use `--offline` to block internet access entirely.
 
 Meanwhile, your host machine stays clean. You don't need Node.js, Docker, or any dev tooling installed locally. The only host dependency is Lima. Your SSH keys and signing credentials never enter the VM — we recommend running `git commit` on the host yourself.
 
 ### Why not Docker?
 
-| | No sandbox | Docker | VM (agent-vm) |
+| | No sandbox | Docker | VM (agent_vm) |
 |---|---|---|---|
 | Agent can run any command | Yes | Yes | Yes |
 | File system isolation | None | Partial (shared kernel) | Full |

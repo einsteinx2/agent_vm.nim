@@ -1,16 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# runtime.example.sh — Template for ~/.agent-vm/runtime.sh
+# runtime.example.sh — Template for ~/.agent_vm/runtime.sh
 # =============================================================================
 #
-# This file runs inside every agent-vm on each start, before the per-project
-# .agent-vm.runtime.sh script. Copy it to ~/.agent-vm/runtime.sh and uncomment
+# This file runs inside every agent_vm on each start, before the per-project
+# .agent_vm.runtime.sh script. Copy it to ~/.agent_vm/runtime.sh and uncomment
 # the sections you need.
 #
 # To get started:
-#   cp runtime.example.sh ~/.agent-vm/runtime.sh
+#   cp runtime.example.sh ~/.agent_vm/runtime.sh
 #   # Edit the file with your own values
-#   chmod +x ~/.agent-vm/runtime.sh
+#   chmod +x ~/.agent_vm/runtime.sh
 
 
 # =============================================================================
