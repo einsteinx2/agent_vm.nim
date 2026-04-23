@@ -13,19 +13,37 @@ Feedback welcome!
 ## Prerequisites
 
 - macOS or Linux
-- [Lima](https://lima-vm.io/docs/installation/) (installed automatically via Homebrew if available)
+- Node.js ≥ 22.6 (the CLI is a TypeScript file executed directly by Node via `--experimental-strip-types` — no build step). Node ≥ 23.6 also works without any flag.
+- [Lima](https://lima-vm.io/docs/installation/)
 - A subscription or API key for your agent of choice
 
 ## Install
 
 ```bash
-git clone https://github.com/sylvinus/agent-vm.git
-cd agent-vm
+# 1. Install Node (any mechanism is fine)
+brew install node                 # macOS, or use nvm / fnm / asdf / your distro's package manager
 
-# Add to your shell config
-echo "source $(pwd)/agent-vm.sh" >> ~/.zshrc   # zsh
-echo "source $(pwd)/agent-vm.sh" >> ~/.bashrc  # or bash
+# 2. Install Lima
+brew install lima                 # macOS
+# or follow https://lima-vm.io/docs/installation/ on Linux
+
+# 3. Clone the repo and symlink the CLI into your PATH
+git clone https://github.com/einsteinx2/agent-vm.git
+cd agent-vm
+sudo ln -s "$(pwd)/agent-vm.ts" /usr/local/bin/agent-vm
 ```
+
+`agent-vm` is now on your `$PATH`. No `npm install` is required to run the tool — Node executes `agent-vm.ts` directly via the `--experimental-strip-types` shebang flag.
+
+### Developing
+
+If you're iterating on `agent-vm.ts` and want editor type-checking, run:
+
+```bash
+npm install   # fetches typescript + @types/node (dev only)
+```
+
+The CLI itself still works without it.
 
 ## Usage
 
@@ -227,8 +245,9 @@ Each VM is fully isolated — agents must authenticate independently inside thei
 
 | File | Description |
 |------|-------------|
-| `agent-vm.sh` | Main script — source this in your shell config |
+| `agent-vm.ts` | Main CLI — TypeScript, run directly by Node via `#!/usr/bin/env -S node --experimental-strip-types` |
 | `agent-vm.setup.sh` | Package installation script that runs inside the base VM during setup |
+| `runtime.example.sh` | Template for `~/.agent-vm/runtime.sh` (per-user runtime) |
 
 ## What's in the VM by default
 
@@ -272,6 +291,10 @@ Docker containers share the host kernel. A motivated attacker (or a compromised 
 A VM also avoids the practical headaches of Docker sandboxing. Docker runs natively inside the VM without Docker-in-Docker hacks. Headless Chromium works out of the box. Lima automatically forwards ports to your host. The agent gets a normal Linux environment where everything just works.
 
 This workflow also replaces Docker Desktop on the Mac, which has become more and more bloated over the years.
+
+## Credits
+
+Hard fork of [sylvinus/agent-vm](https://github.com/sylvinus/agent-vm). This fork is rewritten in TypeScript and diverges from upstream — changes are not planned to be contributed back.
 
 ## License
 

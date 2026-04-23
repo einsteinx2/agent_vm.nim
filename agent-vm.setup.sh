@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # agent-vm.setup.sh: Package installation script that runs inside the base VM
-# Part of https://github.com/sylvinus/agent-vm
+# Part of https://github.com/einsteinx2/agent-vm
 #
 # This script is executed inside the VM during "agent-vm setup".
 #
