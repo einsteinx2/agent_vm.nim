@@ -76,7 +76,7 @@ agent-vm opencode              # OpenCode
 agent-vm codex                 # Codex CLI
 ```
 
-Creates a persistent VM for the current directory (or reuses it if one already exists), mounts your working directory, and runs the agent with full permissions. The VM persists after the agent exits so you can reconnect later. Ports opened inside the VM (e.g. by Docker containers or dev servers) are automatically forwarded to your host by Lima.
+Creates a persistent VM for the current directory (or reuses it if one already exists), mounts your working directory, and runs the agent with full permissions. The VM persists after the agent exits so you can reconnect later. Each VM gets its own host loopback IP (see [Accessing services running in the VM](#accessing-services-running-in-the-vm) below) so multiple VMs can expose the same guest ports simultaneously with no conflicts.
 
 Each agent runs with its respective auto-approve flag:
 - `claude` runs with `--dangerously-skip-permissions`
@@ -91,6 +91,29 @@ agent-vm claude --resume                         # Resume previous session
 agent-vm opencode -p "refactor auth module"      # OpenCode with a prompt
 agent-vm codex -q "explain this codebase"        # Codex with a query
 ```
+
+### Accessing services running in the VM
+
+Each VM is assigned a unique host loopback IP (`127.0.0.2`, `127.0.0.3`, ...). Any service the VM listens on is forwarded to that IP with its natural port number. This means you can run multiple VMs with full app stacks (dev server + backend + Postgres + Supabase, etc.) at the same time without port collisions.
+
+```bash
+# VM A (assigned 127.0.0.2):
+#   http://127.0.0.2:3000    — frontend
+#   http://127.0.0.2:54321   — Supabase API
+#   postgres://127.0.0.2:54322
+
+# VM B (assigned 127.0.0.3):
+#   http://127.0.0.3:3000    — frontend
+#   http://127.0.0.3:54321   — Supabase API
+```
+
+Each VM prints its host IP when it starts. To list everything currently listening inside a VM:
+
+```bash
+agent-vm ports
+```
+
+On macOS, the `127.0.0.N` aliases aren't on `lo0` by default, so `agent-vm` runs `sudo ifconfig lo0 alias 127.0.0.N up` the first time a slot is used after boot. You'll be prompted for your password. On Linux, all of `127.0.0.0/8` is loopback — no setup needed.
 
 ### Shell access and running commands
 
@@ -288,7 +311,7 @@ Meanwhile, your host machine stays clean. You don't need Node.js, Docker, or any
 
 Docker containers share the host kernel. A motivated attacker (or a compromised dependency running inside the container) could exploit kernel vulnerabilities to escape. A VM runs its own kernel — even root access inside the VM can't reach the host.
 
-A VM also avoids the practical headaches of Docker sandboxing. Docker runs natively inside the VM without Docker-in-Docker hacks. Headless Chromium works out of the box. Lima automatically forwards ports to your host. The agent gets a normal Linux environment where everything just works.
+A VM also avoids the practical headaches of Docker sandboxing. Docker runs natively inside the VM without Docker-in-Docker hacks. Headless Chromium works out of the box. Each VM gets its own host loopback IP so multiple VMs expose their services (dev servers, databases, Supabase stacks) on natural port numbers without collisions — see [Accessing services running in the VM](#accessing-services-running-in-the-vm). The agent gets a normal Linux environment where everything just works.
 
 This workflow also replaces Docker Desktop on the Mac, which has become more and more bloated over the years.
 

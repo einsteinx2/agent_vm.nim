@@ -9,6 +9,7 @@ import {
   cmdDestroyAll,
   cmdHelp,
   cmdList,
+  cmdPorts,
   cmdRun,
   cmdSetup,
   cmdShell,
@@ -53,6 +54,8 @@ async function main(): Promise<number> {
       return cmdList();
     case "status":
       return cmdStatus();
+    case "ports":
+      return cmdPorts(opts);
     case "help":
     case "--help":
     case "-h":

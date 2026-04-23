@@ -1,11 +1,16 @@
 // VM lifecycle: startup, teardown, and the interactive confirm prompt.
 
+import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { promisify } from "node:util";
 
 import { lima, limaRunScript, limaSilent, printResources, vmExists, vmRunning } from "./lima.ts";
-import { STATE_DIR, TEMPLATE, type VmOptions } from "./types.ts";
+import { allocateSlot, getSlot, hostIpFor, releaseSlot } from "./ports.ts";
+import { DRY_RUN, STATE_DIR, TEMPLATE, type VmOptions } from "./types.ts";
+
+const execFileP = promisify(execFile);
 
 export async function confirm(message: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -15,6 +20,50 @@ export async function confirm(message: string): Promise<boolean> {
   } finally {
     rl.close();
   }
+}
+
+async function setPortForwards(vmName: string, slot: number): Promise<number> {
+  const hostIP = hostIpFor(slot);
+  // Guest 0.0.0.0 matches any bound interface (including 127.0.0.1), per
+  // Lima's "0.0.0.0 matches any bound interface" semantics. Range starts at
+  // 1024 to avoid fighting Lima's ssh forward on port 22.
+  const forwards = [
+    {
+      guestIP: "0.0.0.0",
+      guestPortRange: [1024, 65535],
+      hostIP,
+      hostPortRange: [1024, 65535],
+    },
+  ];
+  return limaSilent(["edit", vmName, "--set", `.portForwards = ${JSON.stringify(forwards)}`], { cwd: "/tmp" });
+}
+
+// On macOS, 127.0.0.X (X > 1) is not aliased to lo0 by default. Add the alias
+// if missing. On Linux, all of 127.0.0.0/8 is loopback — no-op.
+async function ensureLoopbackAlias(slot: number): Promise<boolean> {
+  if (process.platform !== "darwin") return true;
+  const hostIP = hostIpFor(slot);
+  if (DRY_RUN) {
+    console.error(`[dry-run] ensure lo0 alias ${hostIP}`);
+    return true;
+  }
+  try {
+    const { stdout } = await execFileP("ifconfig", ["lo0"]);
+    if (stdout.includes(`inet ${hostIP} `)) return true;
+  } catch {}
+  console.log(`Adding loopback alias ${hostIP} (one-time, requires sudo)...`);
+  const code = await new Promise<number>((resolve) => {
+    const proc = spawn("sudo", ["ifconfig", "lo0", "alias", hostIP, "up"], { stdio: "inherit" });
+    proc.on("close", (c) => resolve(c ?? 1));
+  });
+  if (code !== 0) {
+    console.error(
+      `Error: failed to add loopback alias ${hostIP}.\n` +
+        `Run this manually and retry:\n\n  sudo ifconfig lo0 alias ${hostIP} up\n`,
+    );
+    return false;
+  }
+  return true;
 }
 
 export async function ensureRunning(vmName: string, hostDir: string, opts: VmOptions): Promise<boolean> {
@@ -30,6 +79,7 @@ export async function ensureRunning(vmName: string, hostDir: string, opts: VmOpt
     try {
       unlinkSync(join(STATE_DIR, `.agent-vm-version-${vmName}`));
     } catch {}
+    // Keep the slot file — same VM name gets the same host IP after reset.
   }
 
   const exists = await vmExists(vmName);
@@ -37,11 +87,13 @@ export async function ensureRunning(vmName: string, hostDir: string, opts: VmOpt
     console.log(`Creating VM '${vmName}'...`);
     await limaSilent(["clone", TEMPLATE, vmName, "--tty=false"]);
 
+    const slot = allocateSlot(vmName);
     const mountJson = JSON.stringify([{ location: hostDir, writable: true }]);
     const editArgs = ["edit", vmName, "--set", `.mounts = ${mountJson}`];
     if (opts.memory) editArgs.push("--memory", opts.memory);
     if (opts.cpus) editArgs.push("--cpus", opts.cpus);
     await limaSilent(editArgs, { cwd: "/tmp" });
+    await setPortForwards(vmName, slot);
 
     if (opts.disk) {
       const code = await limaSilent(["edit", vmName, "--disk", opts.disk], { cwd: "/tmp" });
@@ -91,6 +143,19 @@ export async function ensureRunning(vmName: string, hostDir: string, opts: VmOpt
     await printResources(vmName);
   }
 
+  // Back-fill port forwarding for VMs created before this feature.
+  if (exists && getSlot(vmName) === null) {
+    console.log(
+      `VM '${vmName}' predates per-VM port forwarding. Configuring a dedicated host loopback IP (one-time)...`,
+    );
+    if (await vmRunning(vmName)) {
+      console.log("Stopping VM to apply port-forwarding config...");
+      await limaSilent(["stop", vmName]);
+    }
+    const slot = allocateSlot(vmName);
+    await setPortForwards(vmName, slot);
+  }
+
   const baseVer = join(STATE_DIR, ".agent-vm-base-version");
   const vmVer = join(STATE_DIR, `.agent-vm-version-${vmName}`);
   if (existsSync(baseVer)) {
@@ -103,9 +168,18 @@ export async function ensureRunning(vmName: string, hostDir: string, opts: VmOpt
     }
   }
 
+  const slot = getSlot(vmName);
+  if (slot !== null && !(await ensureLoopbackAlias(slot))) return false;
+
   if (!(await vmRunning(vmName))) {
     console.log(`Starting VM '${vmName}'...`);
     await limaSilent(["start", vmName]);
+  }
+
+  if (slot !== null) {
+    const hostIP = hostIpFor(slot);
+    console.log(`Host IP: ${hostIP}  (all guest ports forwarded here)`);
+    console.log("Use 'agent-vm ports' to list services currently listening in this VM.");
   }
 
   const userRuntime = join(STATE_DIR, "runtime.sh");
@@ -150,4 +224,5 @@ export async function destroyNamed(name: string): Promise<void> {
   try {
     unlinkSync(join(STATE_DIR, `.agent-vm-version-${name}`));
   } catch {}
+  releaseSlot(name);
 }

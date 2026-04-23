@@ -14,6 +14,7 @@ import {
   vmExists,
   which,
 } from "./lima.ts";
+import { getSlot, hostIpFor } from "./ports.ts";
 import { type AgentKind, SCRIPT_DIR, STATE_DIR, TEMPLATE, type VmOptions } from "./types.ts";
 
 function rmSafetyCheck(name: string, hostDir: string, cwd: string, rm: boolean): boolean {
@@ -297,6 +298,57 @@ export async function cmdList(): Promise<number> {
   return 0;
 }
 
+export async function cmdPorts(opts: VmOptions): Promise<number> {
+  const cwd = process.cwd();
+  const { name, hostDir } = await resolveVm(cwd, opts.noInherit);
+  if (!(await vmExists(name))) {
+    console.error("No VM found for this directory.");
+    return 1;
+  }
+  const slot = getSlot(name);
+  const hostIP = slot === null ? "127.0.0.1" : hostIpFor(slot);
+
+  const r = await lima(["shell", name, "sudo", "ss", "-tlnHp"]);
+  if (r.exitCode !== 0) {
+    process.stderr.write(r.stderr);
+    return r.exitCode;
+  }
+
+  type Row = { port: number; process: string };
+  const byPort = new Map<number, Row>();
+  const procRe = new RegExp('users:\\(\\("([^"]+)"');
+  for (const line of r.stdout.split("\n")) {
+    // Columns: State Recv-Q Send-Q Local Peer [Process]
+    const cols = line.split(/\s+/);
+    if (cols.length < 5) continue;
+    const local = cols[3];
+    const portMatch = local.match(/:(\d+)$/);
+    if (!portMatch) continue;
+    const port = Number(portMatch[1]);
+    if (port === 22) continue; // lima-internal ssh
+    if (local.startsWith("127.0.0.53:")) continue; // systemd-resolved
+    const procMatch = line.match(procRe);
+    const procName = procMatch ? procMatch[1] : "";
+    if (!byPort.has(port) || (byPort.get(port)!.process === "" && procName)) {
+      byPort.set(port, { port, process: procName });
+    }
+  }
+
+  console.log(`VM '${name}' — host IP ${hostIP}${hostDir !== cwd ? ` (mounted at ${hostDir})` : ""}`);
+  if (byPort.size === 0) {
+    console.log("  (no services listening)");
+    return 0;
+  }
+  const rows = [...byPort.values()].sort((a, b) => a.port - b.port);
+  const procWidth = Math.max(7, ...rows.map((r) => r.process.length));
+  console.log(`  ${"PORT".padEnd(6)}  ${"PROCESS".padEnd(procWidth)}  HOST URL`);
+  for (const row of rows) {
+    const url = `http://${hostIP}:${row.port}`;
+    console.log(`  ${String(row.port).padEnd(6)}  ${row.process.padEnd(procWidth)}  ${url}`);
+  }
+  return 0;
+}
+
 export async function cmdStatus(): Promise<number> {
   const cwd = process.cwd();
   const { name: resolvedName, hostDir: resolvedHostDir } = await resolveVm(cwd, false, true);
@@ -348,6 +400,7 @@ Commands:
   destroy-all        Stop and delete all agent-vm VMs
   list               List all agent-vm VMs
   status             Show status of all VMs (current dir marked with >)
+  ports              List services listening in the current directory's VM
   help               Show this help
 
 VM options (for claude, opencode, codex, shell, run):
@@ -375,6 +428,10 @@ Examples:
   agent-vm shell                             # Shell into the VM
   agent-vm run npm install                   # Run a command in the VM
   agent-vm claude -p "fix lint errors"       # Pass args to claude
+
+Each VM gets its own host loopback IP (127.0.0.2, 127.0.0.3, ...) so
+services inside each VM are reachable at that IP with their natural port
+numbers — e.g. http://127.0.0.2:3000. Use "agent-vm ports" to list them.
 
 VMs are persistent and unique per directory. Running "agent-vm shell" or
 "agent-vm claude" in the same directory will reuse the same VM. Running

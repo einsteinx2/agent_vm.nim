@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export const TEMPLATE = "avm-base";
 export const STATE_DIR = join(homedir(), ".agent-vm");
+export const SLOTS_DIR = join(STATE_DIR, "slots");
 export const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 export const DRY_RUN = process.env.AGENT_VM_DRY_RUN === "1";
 
