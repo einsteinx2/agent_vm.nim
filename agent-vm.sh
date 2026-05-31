@@ -69,6 +69,51 @@ _agent_vm_print_resources() {
   fi
 }
 
+# Shadow project-relative dirs (e.g. node_modules) with persistent VM-local
+# storage so host arch-specific builds never collide with the VM's Linux builds.
+# Reads <host_dir>/.agent-vm.shadow: newline-separated paths relative to the
+# project root; '#' comments and blank lines ignored. Idempotent (mountpoint -q).
+# Backing dirs live on the VM's own disk (~/.cache/agent-vm-shadow), so they are
+# removed automatically when the VM is destroyed; the host copy is never touched.
+_agent_vm_apply_shadows() {
+  local vm_name="$1"
+  local host_dir="$2"
+  local shadow_cfg="${host_dir}/.agent-vm.shadow"
+  [[ -f "$shadow_cfg" ]] || return 0
+
+  local -a rel_paths=()
+  local rel
+  # Strip '#' comments, trim surrounding whitespace, and skip blank lines via
+  # sed, so parsing works under both bash and zsh (this file is sourced into
+  # the user's interactive shell, and zsh treats '#' as a pattern character).
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    case "$rel" in
+      /*|*..*) echo "agent-vm: skipping unsafe shadow path '$rel'" >&2; continue ;;
+    esac
+    rel_paths+=("$rel")
+  done < <(sed -e 's/#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$shadow_cfg")
+  [[ ${#rel_paths[@]} -eq 0 ]] && return 0
+
+  echo "Applying VM-local shadow mounts..."
+  local rel target backing hash
+  for rel in "${rel_paths[@]}"; do
+    target="${host_dir}/${rel}"
+    hash=$(printf '%s' "$rel" | shasum -a 256 | cut -c1-16)
+    backing="\$HOME/.cache/agent-vm-shadow/${hash}"   # \$HOME expands inside the VM
+    limactl shell "$vm_name" sh -c "
+      set -e
+      mkdir -p ${backing}
+      mkdir -p '${target}'
+      if ! mountpoint -q '${target}'; then
+        sudo mount --bind ${backing} '${target}'
+      fi
+    " 2>/dev/null \
+      && echo "  shadowed ${rel}" \
+      || echo "  warning: failed to shadow ${rel}" >&2
+  done
+}
+
 # Ensure the VM for cwd exists and is running, creating/starting as needed
 # Usage: _agent_vm_ensure_running <vm_name> <host_dir> [--disk GB] [--memory GB] [--reset]
 _agent_vm_ensure_running() {
@@ -186,6 +231,10 @@ _agent_vm_ensure_running() {
     echo "Starting VM '$vm_name'..."
     limactl start "$vm_name" &>/dev/null
   fi
+
+  # Apply VM-local shadow mounts before any runtime script runs `npm install`,
+  # so installs land in VM-local storage instead of the host's mounted copy.
+  _agent_vm_apply_shadows "$vm_name" "$host_dir"
 
   # Run per-user runtime script if it exists
   if [ -f "$AGENT_VM_STATE_DIR/runtime.sh" ]; then
@@ -350,6 +399,7 @@ Customization:
   ~/.agent-vm/setup.sh              Per-user setup (runs during "agent-vm setup")
   ~/.agent-vm/runtime.sh            Per-user runtime (runs on each VM start)
   <project>/.agent-vm.runtime.sh    Per-project runtime (runs on each VM start)
+  <project>/.agent-vm.shadow        Per-project dirs to shadow with VM-local storage
 
 More info: https://github.com/sylvinus/agent-vm
 EOF

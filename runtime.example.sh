@@ -11,6 +11,12 @@
 #   cp runtime.example.sh ~/.agent-vm/runtime.sh
 #   # Edit the file with your own values
 #   chmod +x ~/.agent-vm/runtime.sh
+#
+# Note: if you run `npm install` (or other installs that produce arch-specific
+# binaries) here or in a project's .agent-vm.runtime.sh, the result is written
+# into the shared host directory and can clash with the host's own install. To
+# give the VM its own independent copy, list the directory in a project's
+# .agent-vm.shadow file. See .agent-vm.shadow.example.
 
 
 # =============================================================================

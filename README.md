@@ -201,6 +201,19 @@ mise install
 bundle install
 ```
 
+### Per-project shadow mounts: `.agent-vm.shadow`
+
+Your working directory is mounted **writable** into the VM at the same path, so the host and VM share it. That's a problem for directories holding architecture-specific build artifacts — most commonly `node_modules`. A native binary dependency installs the macOS build when you run `npm i` on the host and the Linux build when you run it inside the VM, and because the directory is shared each one overwrites the other (so VM tests break after you launch the frontend on the host, and vice versa).
+
+Create a `.agent-vm.shadow` file at the project root listing such directories (one path per line, relative to the project root). Each is bind-mounted over with a dedicated directory on the **VM's own disk**, so the VM gets its own independent contents and the host copy is never read or written:
+
+```
+# your-project/.agent-vm.shadow
+frontend/node_modules
+```
+
+The backing storage lives inside the VM, so it persists across `agent-vm stop`/start (your `npm install` runs once and is reused) and is removed automatically when the VM is destroyed — nothing is left on the host. See [`.agent-vm.shadow.example`](.agent-vm.shadow.example). Lines starting with `#` are ignored; absolute paths and `..` are rejected.
+
 ### MCP servers
 
 The base VM comes with [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp) pre-configured for Claude, giving the agent headless browser access.
@@ -237,6 +250,8 @@ Each VM is fully isolated — agents must authenticate independently inside thei
 |------|-------------|
 | `agent-vm.sh` | Main script — source this in your shell config |
 | `agent-vm.setup.sh` | Package installation script that runs inside the base VM during setup |
+| `runtime.example.sh` | Template for `~/.agent-vm/runtime.sh` (per-user runtime) |
+| `.agent-vm.shadow.example` | Template for a project's `.agent-vm.shadow` (VM-local shadow mounts) |
 
 ## What's in the VM by default
 

@@ -1,0 +1,18 @@
+# .agent-vm.shadow — copy to <project-root>/.agent-vm.shadow
+#
+# Paths (relative to the project root) to back with persistent VM-local storage.
+#
+# Each listed directory is bind-mounted over with a dedicated directory on the
+# VM's own disk, so the host copy is shadowed (never read or written) and the VM
+# gets its own independent contents. This is useful for arch-specific build
+# artifacts like node_modules: `npm i` on the macOS host installs the darwin
+# build while `npm i` inside the Linux VM installs the linux build, and because
+# the project dir is shared they would otherwise overwrite each other.
+#
+# Notes:
+#   - Backing storage persists across VM stop/start, so `npm install` runs once
+#     and is reused. It is removed automatically when the VM is destroyed.
+#   - Lines starting with '#' and blank lines are ignored.
+#   - Paths must be relative to the project root (no leading '/' or '..').
+
+frontend/node_modules
