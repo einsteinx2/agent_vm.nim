@@ -55,7 +55,28 @@
 
 
 # =============================================================================
-# 4. Claude Code skills
+# 4. Claude Code authentication
+# =============================================================================
+#
+# Skip interactive login by providing a long-lived OAuth token.
+#
+#   To generate a token (on your host machine, one-time):
+#     claude setup-token
+#
+#   Copy the token and paste it below:
+
+# echo 'export CLAUDE_CODE_OAUTH_TOKEN="<your-setup-token>"' >> ~/.zshenv
+#
+# Skip the first-run onboarding flow so Claude starts without interactive setup:
+# CLAUDE_JSON="$HOME/.claude.json"
+# jq '.hasCompletedOnboarding = true | .lastOnboardingVersion = "0.0.0"' "$CLAUDE_JSON" > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+
+# Enable dangerously-skip-permissions mode (only safe inside a sandbox/VM).
+# Add "defaultMode": "bypassPermissions" to your ~/.claude/settings.json.
+
+
+# =============================================================================
+# 5. Claude Code skills
 # =============================================================================
 #
 # Clone shared skills into the global skills directory.
@@ -73,7 +94,7 @@
 
 
 # =============================================================================
-# 5. MCP servers
+# 6. MCP servers
 # =============================================================================
 #
 # Add MCP servers available to Claude Code in all projects (--scope user).
@@ -82,7 +103,7 @@
 
 
 # =============================================================================
-# 6. Claude Code status line
+# 7. Claude Code status line
 # =============================================================================
 #
 # Install a custom status line command in ~/.claude/settings.json.
