@@ -24,12 +24,24 @@ AGENT_VM_STATE_DIR="${HOME}/.agent-vm"
 AGENT_VM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Generate a deterministic VM name for a directory
+# Truncates the base portion so the Lima socket path stays under UNIX_PATH_MAX (104)
 _agent_vm_name() {
   local dir="${1:-$(pwd)}"
   local hash
   hash=$(echo -n "$dir" | shasum -a 256 | cut -c1-8)
   local base
   base=$(basename "$dir" | tr -cs 'a-zA-Z0-9' '-' | sed 's/^-//;s/-$//')
+
+  # Socket path: $HOME/.lima/<name>/ssh.sock.1234567890123456 must be < 104
+  local max_name_len=$(( 103 - ${#HOME} - 7 - 26 ))  # 7 = /.lima/ + /  26 = ssh.sock.1234567890123456
+  local prefix_len=$(( 9 + 1 + 8 ))  # "agent-vm-" + "-" + hash
+  local max_base_len=$(( max_name_len - prefix_len ))
+
+  if (( ${#base} > max_base_len )); then
+    base="${base:0:$max_base_len}"
+    base="${base%-}"
+  fi
+
   echo "agent-vm-${base}-${hash}"
 }
 
@@ -90,6 +102,16 @@ _agent_vm_ensure_running() {
     rm -f "$AGENT_VM_STATE_DIR/.agent-vm-version-${vm_name}"
   fi
 
+  # Resolve the main git repo path for worktree support
+  local git_repo_dir=""
+  if [[ -n "$git_ro" ]]; then
+    local git_common_dir
+    git_common_dir="$(git -C "$host_dir" rev-parse --git-common-dir 2>/dev/null)"
+    if [[ -n "$git_common_dir" ]]; then
+      git_repo_dir="$(cd "$host_dir" && cd "$git_common_dir" && cd .. && pwd)"
+    fi
+  fi
+
   if ! _agent_vm_exists "$vm_name"; then
     echo "Creating VM '$vm_name'..."
     limactl clone "$AGENT_VM_TEMPLATE" "$vm_name" --tty=false &>/dev/null
@@ -97,7 +119,11 @@ _agent_vm_ensure_running() {
     # Mount and memory/cpus are applied separately from disk, because
     # Lima rejects the entire edit if disk shrinking is attempted.
     local edit_args=()
-    edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}]")
+    if [[ -n "$git_repo_dir" && "$git_repo_dir" != "$host_dir" ]]; then
+      edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}, {\"location\": \"${git_repo_dir}\", \"writable\": false}]")
+    else
+      edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}]")
+    fi
     [[ -n "$memory" ]] && edit_args+=(--memory "$memory")
     [[ -n "$cpus" ]]   && edit_args+=(--cpus "$cpus")
     (cd /tmp && limactl edit "$vm_name" "${edit_args[@]}") &>/dev/null
@@ -128,7 +154,11 @@ _agent_vm_ensure_running() {
     fi
     echo "Updating VM resources..."
     local edit_args=()
-    edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}]")
+    if [[ -n "$git_repo_dir" && "$git_repo_dir" != "$host_dir" ]]; then
+      edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}, {\"location\": \"${git_repo_dir}\", \"writable\": false}]")
+    else
+      edit_args+=(--set ".mounts = [{\"location\": \"${host_dir}\", \"writable\": true}]")
+    fi
     [[ -n "$memory" ]] && edit_args+=(--memory "$memory")
     [[ -n "$cpus" ]]   && edit_args+=(--cpus "$cpus")
     local edit_output
@@ -185,10 +215,8 @@ _agent_vm_ensure_running() {
     limactl shell "$vm_name" sudo mount -o remount,ro "$host_dir"
   fi
 
-  if [[ -n "$git_ro" ]] && [[ -d "$host_dir/.git" ]]; then
-    echo "Mounting .git directory as read-only..."
-    limactl shell "$vm_name" sudo mount --bind "$host_dir/.git" "$host_dir/.git"
-    limactl shell "$vm_name" sudo mount -o remount,ro,bind "$host_dir/.git"
+  if [[ -n "$git_ro" && -n "$git_repo_dir" && "$git_repo_dir" != "$host_dir" ]]; then
+    echo "Git repo mounted read-only at ${git_repo_dir}"
   fi
 }
 
@@ -297,7 +325,7 @@ VM options (for claude, opencode, codex, shell, run):
   --reset            Destroy and re-clone the VM from the base template
   --offline          Block outbound internet (keeps host/VM communication)
   --readonly         Mount the project directory as read-only
-  --git-read-only    Mount .git directory as read-only (allows git diff/log but not commit/stash)
+  --git-read-only    Mount the main git repo read-only (allows git log/diff/blame in worktrees)
   --rm               Automatically destroy the VM after the command exits
 
 Examples:
